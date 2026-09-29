@@ -1,0 +1,16 @@
+{
+  "name": "studymate",
+  "version": "2.0.0",
+  "description": "StudyMate — full-stack study planner with adaptive tests and an AI teacher",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.2.1"
+  }
+}

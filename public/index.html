@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StudyMate</title>
+<meta name="theme-color" content="#2563eb">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StudyMate">
+<link rel="icon" href="/icon-512.png">
+<link rel="apple-touch-icon" href="/icon-512.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+
+<div class="login-screen" id="loginScreen" style="display:none">
+    <div class="login-card">
+        <img class="login-logo" src="/icon-512.png" alt="StudyMate logo">
+        <h1>📚 StudyMate</h1>
+        <p style="color:var(--muted);margin-bottom:10px;">Plan. Study. Practice. Improve.</p>
+
+        <div class="login-tabs">
+            <button type="button" id="tabSignIn" class="login-tab active">Sign In</button>
+            <button type="button" id="tabRegister" class="login-tab">Create Account</button>
+        </div>
+
+        <div id="registerFields" style="display:none">
+            <label for="loginName">Full name</label>
+            <input id="loginName" placeholder="Enter your full name" autocomplete="name">
+
+            <div class="login-grid">
+                <div>
+                    <label for="loginStandard">Standard</label>
+                    <select id="loginStandard">
+                        <option value="">Select</option>
+                        <option>5th</option><option>6th</option><option>7th</option><option>8th</option>
+                        <option>9th</option><option>10th</option><option>11th</option><option>12th</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="loginClass">Class / Division</label>
+                    <input id="loginClass" placeholder="e.g. A" autocomplete="off">
+                </div>
+            </div>
+
+            <label for="loginBoard">Board</label>
+            <select id="loginBoard">
+                <option value="">Select</option>
+                <option>CBSE</option>
+                <option>ICSE</option>
+                <option>Maharashtra State Board</option>
+                <option>Other</option>
+            </select>
+
+            <div id="otherBoardWrap" style="display:none">
+                <label for="loginBoardOther">Please type your board</label>
+                <input id="loginBoardOther" placeholder="e.g. Karnataka State Board">
+            </div>
+        </div>
+
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" type="email" placeholder="Email address" autocomplete="email">
+
+        <label for="loginPassword">Password</label>
+        <div style="display:flex;gap:8px;align-items:center">
+            <input id="loginPassword" type="password" placeholder="At least 8 characters" style="flex:1" autocomplete="current-password">
+            <button type="button" class="icon-btn" id="togglePwBtn" title="Show/hide password" style="padding:10px 12px">👁️</button>
+        </div>
+        <button type="button" class="btn" id="generatePwBtn" style="margin-top:8px;background:#7c3aed;display:none">🎲 Generate strong password</button>
+        <p id="pwGeneratedHint" style="font-size:12px;color:var(--muted);margin-top:6px;display:none">Copied to the field above — write it down somewhere safe, you'll need it to sign in next time.</p>
+
+        <div id="passwordStrengthWrap" style="margin-top:8px;display:none">
+            <div class="progress" style="height:8px">
+                <div class="progress-bar" id="passwordStrengthBar" style="background:var(--danger)"></div>
+            </div>
+            <p id="passwordStrengthLabel" style="font-size:13px;margin-top:5px;color:var(--muted)"></p>
+        </div>
+
+        <button class="btn" id="loginSubmitBtn" style="width:100%;margin-top:16px">Sign In</button>
+        <p id="loginError" style="color:var(--danger);margin-top:10px;"></p>
+    </div>
+</div>
+
+
+<div class="app" id="app" style="display:none">
+
+<aside class="sidebar">
+<div class="logo"><img class="sidebar-logo" src="/icon-512.png" alt="">📚 Study<span>Mate</span></div>
+<div class="nav">
+<button class="active" data-action="nav" data-page="dashboard">🏠 Dashboard</button>
+<button class="ai-nav" data-action="nav" data-page="ai">🤖 AI Teacher</button>
+<button data-action="nav" data-page="subjects">📚 Subjects</button>
+<button data-action="nav" data-page="tests">📝 Tests</button>
+<button data-action="nav" data-page="tasks">✅ Tasks</button>
+<button data-action="nav" data-page="notes">🗒️ Notes</button>
+<button data-action="nav" data-page="progress">📊 Progress</button>
+<button data-action="nav" data-page="achievements">🏆 Achievements</button>
+<button data-action="nav" data-page="timetable">🗓️ Time Table</button>
+<button data-action="logout">🚪 Logout</button>
+</div>
+</aside>
+
+
+<main class="main">
+
+<div class="topbar">
+<h1 id="pageTitle">Dashboard</h1>
+<div class="topbar-right">
+    <button class="icon-btn" id="themeBtn" title="Switch theme">🌙</button>
+    <button class="icon-btn" id="installBtn" title="Install StudyMate as an app" style="display:none">⬇️ Install App</button>
+    <div class="icon-btn" id="creditsBadge" title="Your AI credits — earn more by studying!" style="cursor:default;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;font-weight:700;">⚡ <span id="creditsCount">100</span></div>
+    <div class="profile">👤 <span id="profileName">Student</span><small id="profileClass"></small></div>
+</div>
+</div>
+
+
+<section id="dashboard" class="page active">
+
+<div class="ai-banner">
+    <div><h3>🤖 Ask your AI Teacher</h3><p id="aiBannerLine">Stuck on a concept? Get an explanation in seconds.</p></div>
+    <button class="btn" data-action="open-ai">Open AI Teacher</button>
+</div>
+
+<div class="cards">
+<div class="card"><h3>Subjects</h3><div class="number" id="dashSubjects">0</div></div>
+<div class="card"><h3>Topics Completed</h3><div class="number" id="dashTopics">0</div></div>
+<div class="card"><h3>Tests Passed</h3><div class="number" id="dashTests">0</div></div>
+<div class="card"><h3>Overall Progress</h3><div class="number" id="dashProgress">0%</div></div>
+<div class="card"><h3>⚡ AI Credits</h3><div class="number" id="dashCredits">100</div></div>
+</div>
+
+<div class="section">
+<div class="section-title">📈 Your Progress</div>
+<div class="progress"><div class="progress-bar" id="dashboardProgress"></div></div>
+<p style="margin-top:10px;color:var(--muted)">Progress increases only after successfully completing tests.</p>
+</div>
+
+<div class="section">
+<div class="section-title">⚡ Quick Actions</div>
+<button class="btn" data-action="open-ai">Ask AI Teacher</button>
+<button class="btn secondary" data-action="nav" data-page="subjects">Study Subjects</button>
+<button class="btn secondary" data-action="nav" data-page="tests">Take a Test</button>
+</div>
+
+</section>
+
+
+<section id="subjects" class="page">
+<div class="section" id="subjectListWrap">
+<div class="section-title">📚 My Subjects</div>
+<p style="color:var(--muted);margin-bottom:10px">
+All subjects and chapters for your standard were loaded automatically when you signed in. Topic titles use a common core syllabus — if your board's textbook wording differs slightly, the underlying topic is still the same. Add any extra subject below if something's missing.
+</p>
+
+<div class="form-row">
+<input id="subjectName" placeholder="Enter subject name">
+<button class="btn" data-action="add-subject">+ Add Subject</button>
+<button class="btn secondary" data-action="load-all-subjects">Load All Subjects for My Standard</button>
+</div>
+
+<div class="subject-grid" id="subjectList"></div>
+</div>
+
+<div class="section" id="subjectDetailView" style="display:none">
+<button class="btn secondary" data-action="close-subject-detail" style="margin-bottom:16px">◀ Back to Subjects</button>
+<div class="section-title" id="subjectDetailTitle">📚 Subject</div>
+<div id="subjectDetailChapters"></div>
+</div>
+</section>
+
+
+<section id="tests" class="page">
+<div class="section">
+<div class="section-title">📝 Practice Tests</div>
+<div id="testArea">
+<p>Select a topic from Subjects to automatically start its adaptive test, or choose a quick test below.</p>
+<br>
+<button class="btn" data-action="start-quick-test">Start Quick Test (-5 ⚡)</button>
+</div>
+</div>
+</section>
+
+
+<section id="ai" class="page">
+<div class="section">
+<div class="section-title">🤖 AI Teacher</div>
+
+<div style="background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:10px 16px;margin-bottom:14px;font-size:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+<span>⚡ You have <b id="aiPageCredits">100</b> credits. Simple question: 1 · Detailed explanation: 2 · Study plan: 2 · AI-generated test: 5</span>
+<span style="color:var(--muted)">Earn more by passing tests, finishing chapters and hitting your daily goal!</span>
+</div>
+
+<div id="aiConnectBanner" style="display:none;background:var(--brand-soft);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:14px;font-size:14px;">
+💡 Want the AI Teacher to answer literally anything (not just study topics)? <a href="#" data-action="show-ai-settings" style="color:var(--brand);font-weight:600">Connect your free AI backend</a> — takes 5 minutes, no cost.
+</div>
+
+<div id="aiSettingsBox" style="display:none;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;">
+<b>⚙️ Connect a real AI (optional)</b>
+<p style="color:var(--muted);margin:8px 0 10px;font-size:14px">
+Deploy the free Cloudflare Worker (instructions in the file you were given), then paste the URL it gives you below. Leave this blank to keep using the built-in study-only assistant.
+</p>
+<div class="form-row" style="grid-template-columns:1fr auto">
+<input id="aiWorkerUrlInput" placeholder="https://your-worker-name.yourname.workers.dev">
+<button class="btn" data-action="save-ai-settings">Save</button>
+</div>
+<p id="aiSettingsStatus" style="font-size:13px;margin-top:8px;color:var(--muted)"></p>
+</div>
+
+<div class="chat-box" id="chatBox"></div>
+
+<div class="chips">
+<button class="chip" data-action="quick-ask" data-question="Make a study plan for me">📅 Study plan</button>
+<button class="chip" data-action="quick-ask" data-question="How do I revise properly?">🔁 Revision tips</button>
+<button class="chip" data-action="quick-ask" data-question="Explain Photosynthesis">🌱 Explain a topic</button>
+<button class="chip" data-action="quick-ask" data-question="What is the capital of India?">🌍 General knowledge</button>
+</div>
+
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+<button class="chip" id="readAloudToggle" data-action="toggle-read-aloud" title="Have the AI Teacher speak its answers out loud">🔈 Read Answers Aloud: Off</button>
+<button class="chip" data-action="show-ai-settings" title="Connect or manage your AI backend">⚙️ AI Settings</button>
+<span id="voiceStatus" style="font-size:13px;color:var(--muted)"></span>
+</div>
+
+<div class="form-row" style="grid-template-columns:1fr auto auto">
+<input id="aiInput" placeholder="Ask your study question, or tap the mic to speak...">
+<button class="btn" id="micBtn" data-action="toggle-voice-input" title="Speak your question instead of typing" style="font-size:18px;padding:10px 16px">🎤</button>
+<button class="btn" data-action="ask-ai">Send</button>
+</div>
+</div>
+</section>
+
+
+<section id="tasks" class="page">
+<div class="section">
+<div class="section-title">✅ Study Tasks</div>
+<p style="color:var(--muted);margin-bottom:10px">🎁 Completing a task counts toward your daily study goal — earn +5 ⚡ AI credits the first time you tick one off each day.</p>
+<div class="form-row">
+<input id="taskInput" placeholder="Add a study task">
+<button class="btn" data-action="add-task">Add Task</button>
+</div>
+<div id="taskList"></div>
+</div>
+</section>
+
+
+<section id="notes" class="page">
+<div class="section">
+<div class="section-title">🗒️ Study Notes</div>
+<input id="noteTitle" placeholder="Note title">
+<br><br>
+<textarea id="noteText" placeholder="Write your notes here..."></textarea>
+<br><br>
+<button class="btn" data-action="save-note">Save Note</button>
+<div id="notesList" style="margin-top:20px"></div>
+</div>
+</section>
+
+
+<section id="progress" class="page">
+<div class="section">
+<div class="section-title">📊 Detailed Progress</div>
+<h2 id="progressNumber">0%</h2>
+<br>
+<div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+<br>
+<p>Only passed tests count toward your StudyMate progress.</p>
+</div>
+</section>
+
+
+<section id="achievements" class="page">
+<div class="section">
+<div class="section-title">🏆 Achievements</div>
+<div id="achievementList"></div>
+</div>
+</section>
+
+
+<section id="timetable" class="page">
+<div class="section">
+<div class="section-title">🗓️ Time Table</div>
+
+<div class="form-row" style="grid-template-columns:2fr 1fr 1fr 1fr auto">
+<input id="ttSubject" placeholder="Subject">
+
+<div>
+<label style="margin-top:0">Time</label>
+<div style="display:flex;gap:4px">
+<select id="ttHour" style="margin-top:4px"></select>
+<select id="ttMinute" style="margin-top:4px"></select>
+<select id="ttAmPm" style="margin-top:4px"><option>AM</option><option>PM</option></select>
+</div>
+</div>
+
+<div>
+<label style="margin-top:0">Date</label>
+<div style="display:flex;gap:4px">
+<select id="ttDay" style="margin-top:4px"></select>
+<select id="ttMonth" style="margin-top:4px"></select>
+<select id="ttYear" style="margin-top:4px"></select>
+</div>
+</div>
+
+<button class="btn" data-action="add-timetable" style="align-self:end">+ Add</button>
+</div>
+
+<div style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse" id="timetableTable">
+<thead>
+<tr style="text-align:left;border-bottom:2px solid var(--line)">
+<th style="padding:10px">Subject</th>
+<th style="padding:10px">Time</th>
+<th style="padding:10px">Date</th>
+<th style="padding:10px"></th>
+</tr>
+</thead>
+<tbody id="timetableBody"></tbody>
+</table>
+</div>
+</div>
+</section>
+
+</main>
+</div>
+
+<button class="fab" data-action="open-ai" title="Ask the AI Teacher">🤖 AI Teacher</button>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

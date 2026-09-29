@@ -1,6 +1,6 @@
 // Static hosts (Vercel) can't run the API, so the frontend there calls the
 // backend server directly. After deploying the backend, put its URL below.
-const BACKEND_URL = 'https://YOUR-BACKEND-URL.onrender.com';
+const BACKEND_URL = 'https://studymate-api.onrender.com';
 const API_BASE = location.hostname.endsWith('.vercel.app') ? BACKEND_URL : '';
 
 // Thin fetch wrapper: JSON API, errors carry status/code/data.

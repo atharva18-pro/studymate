@@ -9,6 +9,9 @@
   },
   "license": "MIT",
   "type": "commonjs",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "express": "^5.2.1"

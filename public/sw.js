@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE = 'studymate-v2';
+const CACHE = 'studymate-v3';
 const SHELL = [
   '/',
   '/index.html',
@@ -43,6 +43,20 @@ self.addEventListener('fetch', (event) => {
 
   // API requests always hit the network.
   if (url.pathname.startsWith('/api/')) return;
+
+  // api.js holds the backend URL — never serve a stale copy of it.
+  if (url.pathname === '/js/api.js') {
+    event.respondWith(
+      fetch(event.request).then((response) => {
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() => caches.match(event.request))
+    );
+    return;
+  }
 
   // Cache-first for app shell, with network fallback that re-caches.
   event.respondWith(

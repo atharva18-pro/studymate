@@ -14,4 +14,4 @@ services:
         value: "24"
       # Comma-separated list of frontend origins allowed to call the API.
       - key: FRONTEND_ORIGIN
-        value: https://studymate-1-green.vercel.app
+        value: https://studymate-1-green.vercel.app,https://studymate-final.vercel.app

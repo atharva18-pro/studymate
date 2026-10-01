@@ -16,9 +16,18 @@ const LABELS = { simple: 'AI question', detailed: 'Detailed explanation', studyP
 /* Optional "real AI" backends, configured server-side:
    - AI_WORKER_URL: a self-hosted endpoint (e.g. the Cloudflare Worker from
      the original app) that accepts POST {question} and returns {answer}.
+   - OPENROUTER_API_KEY: calls OpenRouter's OpenAI-compatible API, which can
+     serve Gemini Flash and many other models. OPENROUTER_MODEL defaults to
+     google/gemini-2.5-flash.
    - OPENAI_API_KEY: uses the OpenAI chat completions API with a study-tutor
      system prompt. OPENAI_MODEL defaults to gpt-4o-mini.
    A per-user worker URL (saved via /api/ai/settings) takes precedence. */
+
+function tutorSystemPrompt(user) {
+  return 'You are StudyMate, a friendly AI teacher for ' +
+    (user.standard ? 'a ' + user.standard + ' standard student' : 'a school student') +
+    '. Give clear, encouraging, age-appropriate study help. Keep answers concise (under 250 words) and use plain text.';
+}
 
 async function askRealAI(question, user) {
   const workerUrl = (user.ai_worker_url || process.env.AI_WORKER_URL || '').trim();
@@ -33,6 +42,26 @@ async function askRealAI(question, user) {
     return String(json.answer);
   }
 
+  const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  if (openRouterKey) {
+    const model = process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash';
+    const res = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + openRouterKey },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: tutorSystemPrompt(user) },
+          { role: 'user', content: question },
+        ],
+        max_tokens: 500,
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.choices || !json.choices[0]) throw new Error('openrouter error: ' + (json.error && json.error.message ? json.error.message : res.status));
+    return String(json.choices[0].message.content).trim();
+  }
+
   const apiKey = (process.env.OPENAI_API_KEY || '').trim();
   if (apiKey) {
     const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -42,12 +71,7 @@ async function askRealAI(question, user) {
       body: JSON.stringify({
         model,
         messages: [
-          {
-            role: 'system',
-            content: 'You are StudyMate, a friendly AI teacher for ' +
-              (user.standard ? 'a ' + user.standard + ' standard student' : 'a school student') +
-              '. Give clear, encouraging, age-appropriate study help. Keep answers concise (under 250 words) and use plain text.',
-          },
+          { role: 'system', content: tutorSystemPrompt(user) },
           { role: 'user', content: question },
         ],
         max_tokens: 500,
@@ -99,7 +123,7 @@ router.post('/ai/ask', async (req, res) => {
   }
   if (!answer) {
     answer = getAIResponse(question, topics, req.user.standard);
-    if (usedRealAI === false && (req.user.ai_worker_url || process.env.AI_WORKER_URL || process.env.OPENAI_API_KEY)) {
+    if (usedRealAI === false && (req.user.ai_worker_url || process.env.AI_WORKER_URL || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY)) {
       answer = "⚠️ Couldn't reach the connected AI, so here's the built-in answer instead:\n\n" + answer;
     }
   }

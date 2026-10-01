@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE = 'studymate-v4';
+const CACHE = 'studymate-v5';
 const SHELL = [
   '/',
   '/index.html',

@@ -1,7 +1,9 @@
-// Static hosts (Vercel) can't run the API, so the frontend there calls the
-// backend server directly. After deploying the backend, put its URL below.
-const BACKEND_URL = 'https://studymate-api-07yn.onrender.com';
-const API_BASE = location.hostname.endsWith('.vercel.app') ? BACKEND_URL : '';
+// Vercel proxies /api/* to the Render backend, so same-origin calls work
+// everywhere and the strict connect-src 'self' CSP is satisfied. If the
+// frontend is ever hosted without that proxy, put the backend URL below and
+// it will be used on *.vercel.app hosts instead.
+const BACKEND_URL = '';
+const API_BASE = location.hostname.endsWith('.vercel.app') && BACKEND_URL ? BACKEND_URL : '';
 
 // Thin fetch wrapper: JSON API, errors carry status/code/data.
 export async function api(path, { method = 'GET', body } = {}) {

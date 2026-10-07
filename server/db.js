@@ -118,6 +118,15 @@ CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `);
 
+// Lightweight migrations for databases created before these columns existed.
+// Duplicate-column errors just mean the column is already there.
+for (const stmt of [
+  `ALTER TABLE users ADD COLUMN security_question TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE users ADD COLUMN security_answer_hash TEXT NOT NULL DEFAULT ''`,
+]) {
+  try { db.exec(stmt); } catch (_) { /* column already exists */ }
+}
+
 // Periodic cleanup of expired sessions and stale pending tests.
 function cleanup() {
   db.prepare(`DELETE FROM sessions WHERE expires_at < datetime('now')`).run();

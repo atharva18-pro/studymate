@@ -23,6 +23,7 @@
         <p style="color:var(--muted);margin-bottom:10px;">Plan. Study. Practice. Improve.</p>
         <p style="color:var(--muted);font-size:12px;margin-bottom:10px;">Version 2.0 · Now with AI</p>
 
+        <div id="loginFormArea">
         <div class="login-tabs">
             <button type="button" id="tabSignIn" class="login-tab active">Sign In</button>
             <button type="button" id="tabRegister" class="login-tab">Create Account</button>
@@ -60,6 +61,20 @@
                 <label for="loginBoardOther">Please type your board</label>
                 <input id="loginBoardOther" placeholder="e.g. Karnataka State Board">
             </div>
+
+            <label for="loginSecurityQuestion">Security question</label>
+            <select id="loginSecurityQuestion">
+                <option value="">Select a question</option>
+                <option>What is your pet's name?</option>
+                <option>What is your best friend's name?</option>
+                <option>What is your favourite food?</option>
+                <option>What is your mother's name?</option>
+                <option>What city or town were you born in?</option>
+            </select>
+            <p style="font-size:12px;color:var(--muted);margin-top:4px">If you ever forget your password, this question is how you get back in — pick one only you know the answer to.</p>
+
+            <label for="loginSecurityAnswer">Your answer</label>
+            <input id="loginSecurityAnswer" placeholder="Your answer (capital letters don't matter)" autocomplete="off">
         </div>
 
         <label for="loginEmail">Email</label>
@@ -82,6 +97,33 @@
 
         <button class="btn" id="loginSubmitBtn" style="width:100%;margin-top:16px">Sign In</button>
         <p id="loginError" style="color:var(--danger);margin-top:10px;"></p>
+        <p id="forgotWrap" style="text-align:center;margin-top:4px"><button type="button" id="forgotLink" style="background:none;border:none;color:var(--brand);font-size:13px;cursor:pointer;padding:6px">Forgot password?</button></p>
+        </div><!-- /loginFormArea -->
+
+        <div id="forgotBox" style="display:none;text-align:left;border-top:1px solid var(--line);margin-top:10px;padding-top:14px">
+            <b>🔑 Reset your password</b>
+
+            <div id="forgotStep1">
+                <p style="color:var(--muted);font-size:13px;margin:8px 0">Type the email you signed up with. We'll show you your security question.</p>
+                <label for="forgotEmail">Email</label>
+                <input id="forgotEmail" type="email" placeholder="Email address" autocomplete="email">
+                <button class="btn" id="forgotContinueBtn" style="width:100%;margin-top:12px">Continue</button>
+            </div>
+
+            <div id="forgotStep2" style="display:none">
+                <p style="font-size:14px;margin:10px 0 4px"><b id="forgotQuestion"></b></p>
+                <label for="forgotAnswer">Your answer</label>
+                <input id="forgotAnswer" placeholder="Your answer" autocomplete="off">
+                <label for="forgotNewPassword">New password</label>
+                <input id="forgotNewPassword" type="password" placeholder="At least 8 characters" autocomplete="new-password">
+                <label for="forgotNewPassword2">Repeat new password</label>
+                <input id="forgotNewPassword2" type="password" placeholder="Repeat the new password" autocomplete="new-password">
+                <button class="btn" id="forgotResetBtn" style="width:100%;margin-top:12px">Set New Password</button>
+            </div>
+
+            <p id="forgotStatus" style="margin-top:10px;font-size:13px;color:var(--danger)"></p>
+            <p style="text-align:center;margin-top:8px"><button type="button" id="forgotBackLink" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:6px">← Back to Sign In</button></p>
+        </div>
     </div>
 </div>
 
@@ -144,6 +186,26 @@
 <button class="btn" data-action="open-ai">Ask AI Teacher</button>
 <button class="btn secondary" data-action="nav" data-page="subjects">Study Subjects</button>
 <button class="btn secondary" data-action="nav" data-page="tests">Take a Test</button>
+</div>
+
+<div class="section">
+<div class="section-title">🔑 Account</div>
+<div class="form-row" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+    <div>
+        <label for="changePwCurrent">Current password</label>
+        <input id="changePwCurrent" type="password" placeholder="Your current password" autocomplete="current-password">
+    </div>
+    <div>
+        <label for="changePwNew">New password</label>
+        <input id="changePwNew" type="password" placeholder="At least 8 characters" autocomplete="new-password">
+    </div>
+    <div>
+        <label for="changePwConfirm">Repeat new password</label>
+        <input id="changePwConfirm" type="password" placeholder="Repeat it" autocomplete="new-password">
+    </div>
+    <div><button class="btn" data-action="change-password" style="width:100%">Save New Password</button></div>
+</div>
+<p id="changePwStatus" style="font-size:13px;color:var(--muted)"></p>
 </div>
 
 </section>

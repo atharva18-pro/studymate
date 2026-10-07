@@ -88,6 +88,7 @@ function setLoginMode(mode) {
     checkPasswordStrength();
   }
   document.getElementById('loginError').textContent = '';
+  setForgotVisible(false);
 }
 
 function checkPasswordStrength() {
@@ -161,16 +162,20 @@ async function submitLogin() {
     const boardSelect = document.getElementById('loginBoard').value;
     const boardOther = document.getElementById('loginBoardOther').value.trim();
     const board = boardSelect === 'Other' ? boardOther : boardSelect;
+    const securityQuestion = document.getElementById('loginSecurityQuestion').value;
+    const securityAnswer = document.getElementById('loginSecurityAnswer').value.trim();
 
     if (name === '') { error.textContent = 'Please enter your name.'; return; }
     if (standard === '') { error.textContent = 'Please select your standard.'; return; }
     if (division === '') { error.textContent = 'Please enter your class / division.'; return; }
     if (boardSelect === '') { error.textContent = 'Please select your board.'; return; }
     if (boardSelect === 'Other' && boardOther === '') { error.textContent = 'Please type your board\'s name.'; return; }
+    if (securityQuestion === '') { error.textContent = 'Please choose a security question.'; return; }
+    if (securityAnswer.length < 2) { error.textContent = 'Please type an answer to your security question.'; return; }
     if (!email.includes('@')) { error.textContent = 'Please enter a valid email address.'; return; }
     if (password.length < 8) { error.textContent = 'Password must be at least 8 characters long.'; return; }
     if (!isPasswordStrongEnough(password)) { error.textContent = 'This password is too easy to guess — make it harder (mix uppercase, numbers and a symbol).'; return; }
-    body = { name, email, password, standard, division, board };
+    body = { name, email, password, standard, division, board, securityQuestion, securityAnswer };
   } else {
     if (!email.includes('@')) { error.textContent = 'Please enter a valid email address.'; return; }
     if (!password) { error.textContent = 'Please enter your password.'; return; }
@@ -191,6 +196,109 @@ async function submitLogin() {
     else error.textContent = e.message || 'Something went wrong — please try again.';
   } finally {
     btn.disabled = false;
+  }
+}
+
+/* ============== FORGOT PASSWORD (security question) ============== */
+
+let resetEmail = '';
+
+function setForgotVisible(open) {
+  document.getElementById('loginFormArea').style.display = open ? 'none' : 'block';
+  document.getElementById('forgotBox').style.display = open ? 'block' : 'none';
+  document.getElementById('loginError').textContent = '';
+  if (open) {
+    setForgotStep(1);
+    document.getElementById('forgotEmail').value = document.getElementById('loginEmail').value;
+    document.getElementById('forgotStatus').textContent = '';
+    setTimeout(() => document.getElementById('forgotEmail').focus(), 50);
+  }
+}
+
+function setForgotStep(n) {
+  document.getElementById('forgotStep1').style.display = n === 1 ? 'block' : 'none';
+  document.getElementById('forgotStep2').style.display = n === 2 ? 'block' : 'none';
+  document.getElementById('forgotStatus').textContent = '';
+}
+
+async function forgotContinue() {
+  const email = document.getElementById('forgotEmail').value.trim();
+  const status = document.getElementById('forgotStatus');
+  if (!email.includes('@')) { status.textContent = 'Please enter a valid email address.'; return; }
+  const btn = document.getElementById('forgotContinueBtn');
+  btn.disabled = true;
+  try {
+    const res = await api('/api/auth/forgot-password', { method: 'POST', body: { email } });
+    resetEmail = email;
+    document.getElementById('forgotQuestion').textContent = res.question;
+    setForgotStep(2);
+    setTimeout(() => document.getElementById('forgotAnswer').focus(), 50);
+  } catch (e) {
+    status.textContent = e.message || 'Something went wrong — please try again.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function submitForgotReset() {
+  const answer = document.getElementById('forgotAnswer').value.trim();
+  const pw = document.getElementById('forgotNewPassword').value;
+  const pw2 = document.getElementById('forgotNewPassword2').value;
+  const status = document.getElementById('forgotStatus');
+
+  if (answer.length < 2) { status.textContent = 'Please type your answer to the security question.'; return; }
+  if (pw.length < 8) { status.textContent = 'New password must be at least 8 characters long.'; return; }
+  if (!isPasswordStrongEnough(pw)) { status.textContent = 'This password is too easy to guess — make it harder (mix uppercase, numbers and a symbol).'; return; }
+  if (pw !== pw2) { status.textContent = 'The two passwords do not match.'; return; }
+
+  status.style.color = 'var(--muted)';
+  status.textContent = 'Saving your new password...';
+  const btn = document.getElementById('forgotResetBtn');
+  btn.disabled = true;
+  try {
+    await api('/api/auth/reset-password', { method: 'POST', body: { email: resetEmail, answer, newPassword: pw } });
+    status.style.color = 'var(--good)';
+    status.textContent = '✅ Password changed! Sign in with your new password.';
+    setTimeout(() => {
+      setForgotVisible(false);
+      document.getElementById('loginEmail').value = resetEmail;
+      const pwInput = document.getElementById('loginPassword');
+      pwInput.value = '';
+      pwInput.focus();
+    }, 1500);
+  } catch (e) {
+    status.style.color = 'var(--danger)';
+    status.textContent = e.message || 'Something went wrong — please try again.';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ============== CHANGE PASSWORD (while signed in) ============== */
+
+async function changePassword() {
+  const current = document.getElementById('changePwCurrent').value;
+  const pw = document.getElementById('changePwNew').value;
+  const pw2 = document.getElementById('changePwConfirm').value;
+  const status = document.getElementById('changePwStatus');
+
+  if (!current) { status.style.color = 'var(--danger)'; status.textContent = 'Please enter your current password.'; return; }
+  if (pw.length < 8) { status.style.color = 'var(--danger)'; status.textContent = 'New password must be at least 8 characters long.'; return; }
+  if (!isPasswordStrongEnough(pw)) { status.style.color = 'var(--danger)'; status.textContent = 'This password is too easy to guess — make it harder (mix uppercase, numbers and a symbol).'; return; }
+  if (pw !== pw2) { status.style.color = 'var(--danger)'; status.textContent = 'The two new passwords do not match.'; return; }
+
+  status.style.color = 'var(--muted)';
+  status.textContent = 'Saving...';
+  try {
+    await api('/api/auth/change-password', { method: 'POST', body: { currentPassword: current, newPassword: pw } });
+    status.style.color = 'var(--good)';
+    status.textContent = '✅ Password changed! Other devices were signed out.';
+    document.getElementById('changePwCurrent').value = '';
+    document.getElementById('changePwNew').value = '';
+    document.getElementById('changePwConfirm').value = '';
+  } catch (e) {
+    status.style.color = 'var(--danger)';
+    status.textContent = e.message || 'Something went wrong — please try again.';
   }
 }
 
@@ -241,6 +349,7 @@ const ACTIONS = {
   'save-note': () => saveNote(),
   'add-timetable': () => addTimetableEntry(),
   'delete-timetable': (el) => deleteTimetableEntry(el.dataset.id),
+  'change-password': () => changePassword(),
 };
 
 document.addEventListener('click', (e) => {
@@ -263,7 +372,10 @@ document.addEventListener('keydown', (e) => {
   if (id === 'subjectName') addSubject();
   else if (id === 'taskInput') addTask();
   else if (id === 'aiInput') askAI();
-  else if (id === 'loginPassword' || id === 'loginEmail' || id === 'loginName') submitLogin();
+  else if (id === 'forgotEmail') forgotContinue();
+  else if (id === 'forgotAnswer' || id === 'forgotNewPassword' || id === 'forgotNewPassword2') submitForgotReset();
+  else if (id === 'changePwCurrent' || id === 'changePwNew' || id === 'changePwConfirm') changePassword();
+  else if (id === 'loginPassword' || id === 'loginEmail' || id === 'loginName' || id === 'loginSecurityAnswer') submitLogin();
 });
 
 /* ============== PWA: INSTALL + SERVICE WORKER ============== */
@@ -300,6 +412,10 @@ function bindLoginUI() {
   document.getElementById('generatePwBtn').addEventListener('click', generateStrongPassword);
   document.getElementById('loginPassword').addEventListener('input', checkPasswordStrength);
   document.getElementById('loginBoard').addEventListener('change', toggleOtherBoardInput);
+  document.getElementById('forgotLink').addEventListener('click', () => setForgotVisible(true));
+  document.getElementById('forgotBackLink').addEventListener('click', () => setForgotVisible(false));
+  document.getElementById('forgotContinueBtn').addEventListener('click', forgotContinue);
+  document.getElementById('forgotResetBtn').addEventListener('click', submitForgotReset);
   document.getElementById('themeBtn').addEventListener('click', toggleTheme);
 }
 

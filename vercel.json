@@ -9,5 +9,11 @@
         }
       ]
     }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://studymate-api-07yn.onrender.com/api/$1"
+    }
   ]
 }

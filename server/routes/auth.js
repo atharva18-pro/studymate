@@ -1,10 +1,12 @@
 'use strict';
 
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const db = require('../db');
 const CURRICULUM = require('../curriculum');
 const { STARTING_CREDITS } = require('../constants');
+const { isEmailConfigured, sendEmail, resetCodeEmail } = require('../email');
 const {
   createSession, destroySession, sessionCookie, expiredCookie,
   requireAuth, isPasswordStrongEnough,
@@ -105,36 +107,90 @@ router.get('/me', requireAuth, (req, res) => {
   res.json(buildState(req.user.id));
 });
 
-/* Password recovery via the security question set at registration. */
+/* Password recovery — email code (Brevo) when configured, otherwise the
+   security question set at registration. */
 
-router.post('/forgot-password', rateLimit, (req, res) => {
+const RESET_CODE_MINUTES = 15;
+const RESET_CODE_MAX_ATTEMPTS = 5;
+
+router.post('/forgot-password', rateLimit, async (req, res) => {
   const { email } = req.body || {};
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
     return res.status(400).json({ error: 'validation', message: 'Please enter a valid email address.' });
   }
-  const user = db.prepare('SELECT id, security_question FROM users WHERE email = ?').get(String(email).trim());
+  const user = db.prepare('SELECT id, email, security_question FROM users WHERE email = ?').get(String(email).trim());
   if (!user) {
     return res.status(404).json({ error: 'no_recovery', message: 'No account found with this email — check the spelling, or create a new account.' });
   }
-  if (!user.security_question) {
-    return res.status(404).json({ error: 'no_recovery', message: 'This account was created without a security question, so its password cannot be reset this way.' });
+
+  let emailFailed = false;
+  if (isEmailConfigured()) {
+    // One email a minute max — silently ignore double-clicks.
+    const existing = db.prepare('SELECT created_at FROM reset_codes WHERE user_id = ?').get(user.id);
+    const tooSoon = existing && existing.created_at > db.prepare(`SELECT datetime('now', '-60 seconds') AS t`).get().t;
+    if (tooSoon) return res.json({ method: 'email', email: user.email });
+
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+    const sent = await sendEmail(user.email, 'StudyMate password reset code', resetCodeEmail(code));
+    if (sent) {
+      db.prepare(`
+        INSERT INTO reset_codes (user_id, code_hash, expires_at, attempts)
+        VALUES (?,?,datetime('now', '+${RESET_CODE_MINUTES} minutes'),0)
+        ON CONFLICT(user_id) DO UPDATE SET code_hash = excluded.code_hash,
+          expires_at = excluded.expires_at, attempts = 0, created_at = datetime('now')
+      `).run(user.id, bcrypt.hashSync(code, 10));
+      return res.json({ method: 'email', email: user.email });
+    }
+    emailFailed = true;
   }
-  res.json({ question: user.security_question });
+
+  // No email service (or the send failed) — use the security question instead.
+  if (!user.security_question) {
+    return res.status(404).json({
+      error: 'no_recovery',
+      message: emailFailed
+        ? 'We could not send the reset email right now — please try again in a minute.'
+        : 'Password reset is not set up for this account yet — ask the app owner for help.',
+    });
+  }
+  res.json({ method: 'question', question: user.security_question });
 });
 
 router.post('/reset-password', rateLimit, (req, res) => {
-  const { email, answer, newPassword } = req.body || {};
-  if (!email || !answer || !newPassword) return res.status(400).json({ error: 'validation', message: 'Please fill in every field.' });
+  const { email, answer, code, newPassword } = req.body || {};
+  if (!email || (!answer && !code) || !newPassword) return res.status(400).json({ error: 'validation', message: 'Please fill in every field.' });
   if (typeof newPassword !== 'string' || newPassword.length < 8) return res.status(400).json({ error: 'validation', message: 'Password must be at least 8 characters long.' });
   if (!isPasswordStrongEnough(newPassword)) return res.status(400).json({ error: 'weak_password', message: 'This password is too easy to guess — make it harder (mix uppercase, numbers and a symbol).' });
 
   const user = db.prepare('SELECT id, password_hash, security_answer_hash FROM users WHERE email = ?').get(String(email).trim());
-  if (!user || !user.security_answer_hash) {
-    return res.status(404).json({ error: 'no_recovery', message: 'This account cannot be reset with a security question.' });
+  if (!user) {
+    return res.status(404).json({ error: 'no_recovery', message: 'No account found with this email.' });
   }
-  if (!bcrypt.compareSync(String(answer).trim().toLowerCase(), user.security_answer_hash)) {
-    return res.status(400).json({ error: 'wrong_answer', message: "That answer doesn't match — try again (capital letters don't matter)." });
+
+  if (code) {
+    const row = db.prepare(`SELECT code_hash, attempts, expires_at < datetime('now') AS expired FROM reset_codes WHERE user_id = ?`).get(user.id);
+    const valid = row && !row.expired && row.attempts < RESET_CODE_MAX_ATTEMPTS && bcrypt.compareSync(String(code), row.code_hash);
+    if (!valid) {
+      if (row && row.expired) {
+        return res.status(400).json({ error: 'wrong_code', message: 'That code has expired — ask for a new code.' });
+      }
+      if (row && row.attempts + 1 >= RESET_CODE_MAX_ATTEMPTS) {
+        db.prepare('DELETE FROM reset_codes WHERE user_id = ?').run(user.id);
+        return res.status(400).json({ error: 'wrong_code', message: 'Too many wrong tries — ask for a new code.' });
+      }
+      if (row) db.prepare('UPDATE reset_codes SET attempts = attempts + 1 WHERE user_id = ?').run(user.id);
+      return res.status(400).json({ error: 'wrong_code', message: "That code doesn't match — check the email again, or ask for a new code." });
+    }
+    db.prepare('DELETE FROM reset_codes WHERE user_id = ?').run(user.id);
+  } else {
+    if (!user.security_answer_hash) {
+      return res.status(404).json({ error: 'no_recovery', message: 'This account cannot be reset with a security question.' });
+    }
+    if (!bcrypt.compareSync(String(answer).trim().toLowerCase(), user.security_answer_hash)) {
+      return res.status(400).json({ error: 'wrong_answer', message: "That answer doesn't match — try again (capital letters don't matter)." });
+    }
   }
+
   if (bcrypt.compareSync(newPassword, user.password_hash)) {
     return res.status(400).json({ error: 'same_password', message: 'That is your current password — choose a different one.' });
   }

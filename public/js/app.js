@@ -199,9 +199,11 @@ async function submitLogin() {
   }
 }
 
-/* ============== FORGOT PASSWORD (security question) ============== */
+/* ============== FORGOT PASSWORD (email code or security question) ============== */
 
 let resetEmail = '';
+let forgotMode = 'question';
+let forgotLastSendAt = 0;
 
 function setForgotVisible(open) {
   document.getElementById('loginFormArea').style.display = open ? 'none' : 'block';
@@ -221,32 +223,69 @@ function setForgotStep(n) {
   document.getElementById('forgotStatus').textContent = '';
 }
 
+function showForgotMethod(res) {
+  forgotMode = res.method === 'email' ? 'email' : 'question';
+  const isEmail = forgotMode === 'email';
+  document.getElementById('forgotEmailLine').style.display = isEmail ? 'block' : 'none';
+  document.getElementById('forgotCodeWrap').style.display = isEmail ? 'block' : 'none';
+  document.getElementById('forgotQuestionWrap').style.display = isEmail ? 'none' : 'block';
+  if (isEmail) {
+    document.getElementById('forgotEmailSentTo').textContent = res.email || resetEmail;
+    document.getElementById('forgotCode').value = '';
+    setTimeout(() => document.getElementById('forgotCode').focus(), 50);
+  } else {
+    document.getElementById('forgotQuestion').textContent = res.question || '';
+    document.getElementById('forgotAnswer').value = '';
+    setTimeout(() => document.getElementById('forgotAnswer').focus(), 50);
+  }
+}
+
 async function forgotContinue() {
   const email = document.getElementById('forgotEmail').value.trim();
   const status = document.getElementById('forgotStatus');
   if (!email.includes('@')) { status.textContent = 'Please enter a valid email address.'; return; }
+  if (forgotLastSendAt && Date.now() - forgotLastSendAt < 60000) {
+    status.textContent = 'Please wait a minute before asking for another code.';
+    return;
+  }
+  const wasResend = document.getElementById('forgotStep2').style.display !== 'none';
   const btn = document.getElementById('forgotContinueBtn');
+  const resendBtn = document.getElementById('forgotResendBtn');
   btn.disabled = true;
+  resendBtn.disabled = true;
   try {
     const res = await api('/api/auth/forgot-password', { method: 'POST', body: { email } });
     resetEmail = email;
-    document.getElementById('forgotQuestion').textContent = res.question;
     setForgotStep(2);
-    setTimeout(() => document.getElementById('forgotAnswer').focus(), 50);
+    showForgotMethod(res);
+    if (res.method === 'email') {
+      forgotLastSendAt = Date.now();
+      if (wasResend) status.textContent = '📨 Sent again — give it a minute to arrive.';
+    }
   } catch (e) {
     status.textContent = e.message || 'Something went wrong — please try again.';
   } finally {
     btn.disabled = false;
+    resendBtn.disabled = false;
   }
 }
 
 async function submitForgotReset() {
-  const answer = document.getElementById('forgotAnswer').value.trim();
   const pw = document.getElementById('forgotNewPassword').value;
   const pw2 = document.getElementById('forgotNewPassword2').value;
   const status = document.getElementById('forgotStatus');
 
-  if (answer.length < 2) { status.textContent = 'Please type your answer to the security question.'; return; }
+  const body = { email: resetEmail, newPassword: pw };
+  if (forgotMode === 'email') {
+    const code = document.getElementById('forgotCode').value.trim();
+    if (!/^\d{6}$/.test(code)) { status.textContent = 'Please type the 6-digit code from the email.'; return; }
+    body.code = code;
+  } else {
+    const answer = document.getElementById('forgotAnswer').value.trim();
+    if (answer.length < 2) { status.textContent = 'Please type your answer to the security question.'; return; }
+    body.answer = answer;
+  }
+
   if (pw.length < 8) { status.textContent = 'New password must be at least 8 characters long.'; return; }
   if (!isPasswordStrongEnough(pw)) { status.textContent = 'This password is too easy to guess — make it harder (mix uppercase, numbers and a symbol).'; return; }
   if (pw !== pw2) { status.textContent = 'The two passwords do not match.'; return; }
@@ -256,7 +295,7 @@ async function submitForgotReset() {
   const btn = document.getElementById('forgotResetBtn');
   btn.disabled = true;
   try {
-    await api('/api/auth/reset-password', { method: 'POST', body: { email: resetEmail, answer, newPassword: pw } });
+    await api('/api/auth/reset-password', { method: 'POST', body });
     status.style.color = 'var(--good)';
     status.textContent = '✅ Password changed! Sign in with your new password.';
     setTimeout(() => {
@@ -373,7 +412,7 @@ document.addEventListener('keydown', (e) => {
   else if (id === 'taskInput') addTask();
   else if (id === 'aiInput') askAI();
   else if (id === 'forgotEmail') forgotContinue();
-  else if (id === 'forgotAnswer' || id === 'forgotNewPassword' || id === 'forgotNewPassword2') submitForgotReset();
+  else if (id === 'forgotCode' || id === 'forgotAnswer' || id === 'forgotNewPassword' || id === 'forgotNewPassword2') submitForgotReset();
   else if (id === 'changePwCurrent' || id === 'changePwNew' || id === 'changePwConfirm') changePassword();
   else if (id === 'loginPassword' || id === 'loginEmail' || id === 'loginName' || id === 'loginSecurityAnswer') submitLogin();
 });
@@ -415,6 +454,7 @@ function bindLoginUI() {
   document.getElementById('forgotLink').addEventListener('click', () => setForgotVisible(true));
   document.getElementById('forgotBackLink').addEventListener('click', () => setForgotVisible(false));
   document.getElementById('forgotContinueBtn').addEventListener('click', forgotContinue);
+  document.getElementById('forgotResendBtn').addEventListener('click', forgotContinue);
   document.getElementById('forgotResetBtn').addEventListener('click', submitForgotReset);
   document.getElementById('themeBtn').addEventListener('click', toggleTheme);
 }

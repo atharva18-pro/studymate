@@ -4,6 +4,7 @@ const path = require('path');
 const express = require('express');
 
 const { attachUser } = require('./auth');
+const { isEmailConfigured } = require('./email');
 const { router: authRouter } = require('./routes/auth');
 const subjectsRouter = require('./routes/subjects');
 const testsRouter = require('./routes/tests');
@@ -58,7 +59,7 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '256kb' }));
 app.use(attachUser);
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, email: isEmailConfigured() ? 'on' : 'off' }));
 
 app.use('/api/auth', authRouter);
 app.use('/api', subjectsRouter);

@@ -110,6 +110,14 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS reset_codes (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_chapters_subject ON chapters(subject_id);
 CREATE INDEX IF NOT EXISTS idx_subjects_user ON subjects(user_id);
 CREATE INDEX IF NOT EXISTS idx_tests_user ON tests(user_id);
@@ -127,9 +135,10 @@ for (const stmt of [
   try { db.exec(stmt); } catch (_) { /* column already exists */ }
 }
 
-// Periodic cleanup of expired sessions and stale pending tests.
+// Periodic cleanup of expired sessions, reset codes and stale pending tests.
 function cleanup() {
   db.prepare(`DELETE FROM sessions WHERE expires_at < datetime('now')`).run();
+  db.prepare(`DELETE FROM reset_codes WHERE expires_at < datetime('now')`).run();
   db.prepare(`DELETE FROM tests WHERE status = 'pending' AND created_at < datetime('now', '-1 day')`).run();
 }
 cleanup();

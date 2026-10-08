@@ -104,16 +104,24 @@
             <b>🔑 Reset your password</b>
 
             <div id="forgotStep1">
-                <p style="color:var(--muted);font-size:13px;margin:8px 0">Type the email you signed up with. We'll show you your security question.</p>
+                <p style="color:var(--muted);font-size:13px;margin:8px 0">Type the email you signed up with to reset your password.</p>
                 <label for="forgotEmail">Email</label>
                 <input id="forgotEmail" type="email" placeholder="Email address" autocomplete="email">
                 <button class="btn" id="forgotContinueBtn" style="width:100%;margin-top:12px">Continue</button>
             </div>
 
             <div id="forgotStep2" style="display:none">
-                <p style="font-size:14px;margin:10px 0 4px"><b id="forgotQuestion"></b></p>
-                <label for="forgotAnswer">Your answer</label>
-                <input id="forgotAnswer" placeholder="Your answer" autocomplete="off">
+                <p id="forgotEmailLine" style="font-size:14px;margin:10px 0 4px">📧 We emailed a 6-digit code to <b id="forgotEmailSentTo"></b>. Check your inbox (and the spam folder).</p>
+                <div id="forgotCodeWrap">
+                    <label for="forgotCode">Reset code</label>
+                    <input id="forgotCode" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code">
+                    <p style="text-align:center;margin:6px 0 0"><button type="button" id="forgotResendBtn" style="background:none;border:none;color:var(--brand);font-size:13px;cursor:pointer;padding:4px">Didn't get it? Send the code again</button></p>
+                </div>
+                <div id="forgotQuestionWrap">
+                    <p style="font-size:14px;margin:10px 0 4px"><b id="forgotQuestion"></b></p>
+                    <label for="forgotAnswer">Your answer</label>
+                    <input id="forgotAnswer" placeholder="Your answer" autocomplete="off">
+                </div>
                 <label for="forgotNewPassword">New password</label>
                 <input id="forgotNewPassword" type="password" placeholder="At least 8 characters" autocomplete="new-password">
                 <label for="forgotNewPassword2">Repeat new password</label>

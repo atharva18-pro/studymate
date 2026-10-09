@@ -49,10 +49,16 @@ export function updateAIPageCredits() {
 export function refreshAISettingsUI() {
   const s = getState();
   if (!s) return;
-  const hasWorker = !!s.user.aiWorkerUrl;
-  document.getElementById('aiConnectBanner').style.display = hasWorker ? 'none' : 'block';
+  const connected = !!s.user.aiWorkerUrl || !!s.user.hasGeminiKey;
+  document.getElementById('aiConnectBanner').style.display = connected ? 'none' : 'block';
   const input = document.getElementById('aiWorkerUrlInput');
   if (input && !input.value) input.value = s.user.aiWorkerUrl || '';
+  const status = document.getElementById('aiSettingsStatus');
+  if (connected && status && !status.textContent) {
+    status.textContent = s.user.hasGeminiKey
+      ? '✅ Gemini is connected for this account — paste a new key anytime to replace it.'
+      : '✅ Worker connected — the AI Teacher will use it.';
+  }
 }
 
 export function toggleAISettingsBox() {
@@ -178,12 +184,17 @@ export function toggleVoiceInput() {
 
 export async function saveAISettings() {
   const url = document.getElementById('aiWorkerUrlInput').value.trim();
+  const geminiKey = document.getElementById('geminiKeyInput').value.trim();
   const status = document.getElementById('aiSettingsStatus');
   try {
-    const res = await api('/api/ai/settings', { method: 'POST', body: { workerUrl: url } });
+    const res = await api('/api/ai/settings', { method: 'POST', body: { workerUrl: url, geminiKey } });
     getState().user.aiWorkerUrl = res.workerUrl;
-    status.textContent = res.workerUrl ? 'Connected — the AI Teacher will use your worker.' : 'Cleared — using the built-in study assistant.';
+    getState().user.hasGeminiKey = res.hasGeminiKey;
+    document.getElementById('geminiKeyInput').value = '';
     refreshAISettingsUI();
+    status.textContent = res.hasGeminiKey
+      ? "✅ Gemini connected — the AI Teacher now uses Google's real AI. Paste a new key anytime to replace it."
+      : (res.workerUrl ? 'Connected — the AI Teacher will use your worker.' : 'Cleared — using the built-in study assistant.');
   } catch (e) {
     status.textContent = e.message;
   }

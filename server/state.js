@@ -6,7 +6,7 @@ const { AI_COSTS, REWARDS, PASS_MARK } = require('./constants');
 // Builds the complete client state bundle: profile, all content,
 // stats, achievements and recent history.
 function buildState(userId) {
-  const user = db.prepare('SELECT id, name, email, standard, division, board, ai_worker_url, credits, last_daily_goal_date FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT id, name, email, standard, division, board, ai_worker_url, gemini_api_key, credits, last_daily_goal_date FROM users WHERE id = ?').get(userId);
 
   const subjects = db.prepare('SELECT id, name FROM subjects WHERE user_id = ? ORDER BY id').all(userId)
     .map(s => ({
@@ -66,7 +66,7 @@ function buildState(userId) {
     user: {
       name: user.name, email: user.email, standard: user.standard,
       division: user.division, board: user.board,
-      aiWorkerUrl: user.ai_worker_url, credits: user.credits,
+      aiWorkerUrl: user.ai_worker_url, hasGeminiKey: !!user.gemini_api_key, credits: user.credits,
       lastDailyGoalDate: user.last_daily_goal_date,
     },
     subjects, tasks, notes, timetable,

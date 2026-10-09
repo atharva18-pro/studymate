@@ -13,15 +13,18 @@ router.use(requireAuth);
 
 const LABELS = { simple: 'AI question', detailed: 'Detailed explanation', studyPlan: 'AI study plan', test: 'AI-generated test' };
 
-/* Optional "real AI" backends, configured server-side:
-   - AI_WORKER_URL: a self-hosted endpoint (e.g. the Cloudflare Worker from
-     the original app) that accepts POST {question} and returns {answer}.
-   - OPENROUTER_API_KEY: calls OpenRouter's OpenAI-compatible API, which can
-     serve Gemini Flash and many other models. OPENROUTER_MODEL defaults to
-     google/gemini-2.5-flash.
-   - OPENAI_API_KEY: uses the OpenAI chat completions API with a study-tutor
-     system prompt. OPENAI_MODEL defaults to gpt-4o-mini.
-   A per-user worker URL (saved via /api/ai/settings) takes precedence. */
+/* Optional "real AI" backends, in priority order:
+   1. Per-user Gemini API key (saved via /api/ai/settings) — calls Google's
+      Gemini API directly (free key from https://aistudio.google.com/apikey).
+   2. Per-user or server AI_WORKER_URL: a self-hosted endpoint (e.g. the
+      Cloudflare Worker from the original app) that accepts POST {question}
+      and returns {answer}.
+   3. GEMINI_API_KEY env: same Gemini API for everyone on the server.
+   4. OPENROUTER_API_KEY: OpenRouter's OpenAI-compatible API. OPENROUTER_MODEL
+      defaults to google/gemini-2.5-flash.
+   5. OPENAI_API_KEY: OpenAI chat completions. OPENAI_MODEL defaults to gpt-4o-mini. */
+
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 
 function tutorSystemPrompt(user) {
   return 'You are StudyMate, a friendly AI teacher for ' +
@@ -29,7 +32,27 @@ function tutorSystemPrompt(user) {
     '. Give clear, encouraging, age-appropriate study help. Keep answers concise (under 250 words) and use plain text.';
 }
 
+async function askGemini(apiKey, question, user) {
+  const res = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: tutorSystemPrompt(user) }] },
+      contents: [{ role: 'user', parts: [{ text: question }] }],
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error('gemini error: ' + (json.error && json.error.message ? json.error.message : res.status));
+  const parts = json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts;
+  const text = parts ? parts.map(p => p.text || '').join('') : '';
+  if (!text.trim()) throw new Error('gemini returned no answer');
+  return text.trim();
+}
+
 async function askRealAI(question, user) {
+  const geminiKey = (user.gemini_api_key || '').trim();
+  if (geminiKey) return askGemini(geminiKey, question, user);
+
   const workerUrl = (user.ai_worker_url || process.env.AI_WORKER_URL || '').trim();
   if (workerUrl) {
     const res = await fetchWithTimeout(workerUrl, {
@@ -41,6 +64,9 @@ async function askRealAI(question, user) {
     if (!res.ok || !json.answer) throw new Error('worker returned no answer');
     return String(json.answer);
   }
+
+  const envGeminiKey = (process.env.GEMINI_API_KEY || '').trim();
+  if (envGeminiKey) return askGemini(envGeminiKey, question, user);
 
   const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
   if (openRouterKey) {
@@ -123,7 +149,7 @@ router.post('/ai/ask', async (req, res) => {
   }
   if (!answer) {
     answer = getAIResponse(question, topics, req.user.standard);
-    if (usedRealAI === false && (req.user.ai_worker_url || process.env.AI_WORKER_URL || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY)) {
+    if (usedRealAI === false && (req.user.gemini_api_key || req.user.ai_worker_url || process.env.AI_WORKER_URL || process.env.GEMINI_API_KEY || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY)) {
       answer = "⚠️ Couldn't reach the connected AI, so here's the built-in answer instead:\n\n" + answer;
     }
   }
@@ -141,8 +167,14 @@ router.post('/ai/settings', (req, res) => {
     return res.status(400).json({ error: 'validation', message: "That doesn't look like a valid https:// URL — double check it." });
   }
   if (url.length > 500) url = url.slice(0, 500);
-  db.prepare('UPDATE users SET ai_worker_url = ? WHERE id = ?').run(url, req.user.id);
-  res.json({ ok: true, workerUrl: url, state: buildState(req.user.id) });
+
+  let geminiKey = String((req.body || {}).geminiKey || '').trim();
+  if (geminiKey && !/^AIza[0-9A-Za-z_-]{30,}$/.test(geminiKey)) {
+    return res.status(400).json({ error: 'validation', message: "That doesn't look like a Google AI Studio API key — it should start with \"AIza\"." });
+  }
+
+  db.prepare('UPDATE users SET ai_worker_url = ?, gemini_api_key = ? WHERE id = ?').run(url, geminiKey, req.user.id);
+  res.json({ ok: true, workerUrl: url, hasGeminiKey: !!geminiKey, state: buildState(req.user.id) });
 });
 
 module.exports = router;

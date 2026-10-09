@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
   division TEXT NOT NULL DEFAULT '',
   board TEXT NOT NULL DEFAULT '',
   ai_worker_url TEXT NOT NULL DEFAULT '',
+  gemini_api_key TEXT NOT NULL DEFAULT '',
   credits INTEGER NOT NULL DEFAULT 100,
   last_daily_goal_date TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -131,6 +132,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 for (const stmt of [
   `ALTER TABLE users ADD COLUMN security_question TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE users ADD COLUMN security_answer_hash TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE users ADD COLUMN gemini_api_key TEXT NOT NULL DEFAULT ''`,
 ]) {
   try { db.exec(stmt); } catch (_) { /* column already exists */ }
 }

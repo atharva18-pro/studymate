@@ -85,7 +85,7 @@ function attachUser(req, _res, next) {
   if (token) {
     const row = db.prepare(`
       SELECT u.id, u.name, u.email, u.standard, u.division, u.board, u.ai_worker_url,
-             u.credits, u.last_daily_goal_date
+             u.gemini_api_key, u.credits, u.last_daily_goal_date
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token = ? AND s.expires_at >= datetime('now')
     `).get(token);

@@ -33,6 +33,8 @@ function tutorSystemPrompt(user) {
 }
 
 async function askGemini(apiKey, question, user) {
+  // 60s: thinking flash models can take a while on cold start; Render's own
+  // request timeout (~100s) stays clear of this.
   const res = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
@@ -40,7 +42,7 @@ async function askGemini(apiKey, question, user) {
       systemInstruction: { parts: [{ text: tutorSystemPrompt(user) }] },
       contents: [{ role: 'user', parts: [{ text: question }] }],
     }),
-  });
+  }, 60000);
   const json = await res.json();
   if (!res.ok) throw new Error('gemini error: ' + (json.error && json.error.message ? json.error.message : res.status));
   const parts = json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts;
@@ -169,8 +171,8 @@ router.post('/ai/settings', (req, res) => {
   if (url.length > 500) url = url.slice(0, 500);
 
   let geminiKey = String((req.body || {}).geminiKey || '').trim();
-  if (geminiKey && !/^AIza[0-9A-Za-z_-]{30,}$/.test(geminiKey)) {
-    return res.status(400).json({ error: 'validation', message: "That doesn't look like a Google AI Studio API key — it should start with \"AIza\"." });
+  if (geminiKey && !/^(AIza[0-9A-Za-z_-]{30,}|AQ\.[A-Za-z0-9_-]{20,})$/.test(geminiKey)) {
+    return res.status(400).json({ error: 'validation', message: "That doesn't look like a Google AI API key — it should start with \"AIza\" or \"AQ.\"." });
   }
 
   db.prepare('UPDATE users SET ai_worker_url = ?, gemini_api_key = ? WHERE id = ?').run(url, geminiKey, req.user.id);

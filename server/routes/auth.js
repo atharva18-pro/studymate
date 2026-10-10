@@ -31,20 +31,31 @@ function rateLimit(req, res, next) {
   next();
 }
 
-function seedSubjects(userId, standard) {
+// Seed statements for a brand-new account, all in one atomic batch with the
+// user INSERT. Rows find each other through the unique email / (user_id, name).
+function buildSeedStatements(email, standard) {
   const subjects = CURRICULUM[standard];
-  if (!subjects) return;
-  const insertSubject = db.prepare('INSERT INTO subjects (user_id, name) VALUES (?,?)');
-  const insertChapter = db.prepare('INSERT INTO chapters (subject_id, name, position) VALUES (?,?,?)');
+  if (!subjects) return [];
+  const stmts = [];
   let position = 0;
   for (const [name, chapters] of Object.entries(subjects)) {
-    const subjRes = insertSubject.run(userId, name);
-    chapters.forEach((chName, i) => insertChapter.run(subjRes.lastInsertRowid, chName, position + i));
+    stmts.push({
+      sql: 'INSERT INTO subjects (user_id, name) VALUES ((SELECT id FROM users WHERE email = ?), ?)',
+      args: [email, name],
+    });
+    chapters.forEach((chName, i) => {
+      stmts.push({
+        sql: `INSERT INTO chapters (subject_id, name, position)
+              VALUES ((SELECT id FROM subjects WHERE user_id = (SELECT id FROM users WHERE email = ?) AND name = ?), ?, ?)`,
+        args: [email, name, chName, position + i],
+      });
+    });
     position += chapters.length;
   }
+  return stmts;
 }
 
-router.post('/register', rateLimit, (req, res) => {
+router.post('/register', rateLimit, async (req, res) => {
   const { name, standard, division, board, email, password, securityQuestion, securityAnswer } = req.body || {};
 
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'validation', message: 'Please enter your name.' });
@@ -57,54 +68,57 @@ router.post('/register', rateLimit, (req, res) => {
   if (!securityQuestion || !String(securityQuestion).trim()) return res.status(400).json({ error: 'validation', message: 'Please choose a security question.' });
   if (!securityAnswer || String(securityAnswer).trim().length < 2) return res.status(400).json({ error: 'validation', message: 'Please type an answer to your security question.' });
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).trim());
+  const cleanEmail = String(email).trim();
+  const existing = await db.get('SELECT id FROM users WHERE email = ?', [cleanEmail]);
   if (existing) return res.status(409).json({ error: 'email_taken', message: 'An account with this email already exists — try signing in instead.' });
 
   const hash = bcrypt.hashSync(password, 10);
   const answerHash = bcrypt.hashSync(String(securityAnswer).trim().toLowerCase(), 10);
 
-  db.exec('BEGIN');
-  let userId;
   try {
-    const res2 = db.prepare(`
-      INSERT INTO users (name, email, password_hash, standard, division, board, credits, security_question, security_answer_hash)
-      VALUES (?,?,?,?,?,?,?,?,?)
-    `).run(String(name).trim(), String(email).trim(), hash, standard, String(division).trim(), String(board).trim(), STARTING_CREDITS, String(securityQuestion).trim(), answerHash);
-    userId = Number(res2.lastInsertRowid);
-    seedSubjects(userId, standard);
-    db.exec('COMMIT');
+    await db.batch([
+      {
+        sql: `INSERT INTO users (name, email, password_hash, standard, division, board, credits, security_question, security_answer_hash)
+              VALUES (?,?,?,?,?,?,?,?,?)`,
+        args: [String(name).trim(), cleanEmail, hash, standard, String(division).trim(), String(board).trim(), STARTING_CREDITS, String(securityQuestion).trim(), answerHash],
+      },
+      ...buildSeedStatements(cleanEmail, standard),
+    ], 'write');
   } catch (e) {
-    db.exec('ROLLBACK');
+    if (/UNIQUE constraint failed: users\.email/i.test(e.message || '')) {
+      return res.status(409).json({ error: 'email_taken', message: 'An account with this email already exists — try signing in instead.' });
+    }
     throw e;
   }
 
-  const token = createSession(userId);
+  const userId = (await db.get('SELECT id FROM users WHERE email = ?', [cleanEmail])).id;
+  const token = await createSession(userId);
   res.setHeader('Set-Cookie', sessionCookie(token));
-  res.status(201).json(buildState(userId));
+  res.status(201).json(await buildState(userId));
 });
 
-router.post('/login', rateLimit, (req, res) => {
+router.post('/login', rateLimit, async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'validation', message: 'Enter your email and password.' });
 
-  const user = db.prepare('SELECT id, password_hash FROM users WHERE email = ?').get(String(email).trim());
+  const user = await db.get('SELECT id, password_hash FROM users WHERE email = ?', [String(email).trim()]);
   if (!user || !bcrypt.compareSync(String(password), user.password_hash)) {
     return res.status(401).json({ error: 'bad_credentials', message: 'Incorrect email or password.' });
   }
 
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   res.setHeader('Set-Cookie', sessionCookie(token));
-  res.json(buildState(user.id));
+  res.json(await buildState(user.id));
 });
 
-router.post('/logout', (req, res) => {
-  destroySession(req.sessionToken);
+router.post('/logout', async (req, res) => {
+  await destroySession(req.sessionToken);
   res.setHeader('Set-Cookie', expiredCookie());
   res.json({ ok: true });
 });
 
-router.get('/me', requireAuth, (req, res) => {
-  res.json(buildState(req.user.id));
+router.get('/me', requireAuth, async (req, res) => {
+  res.json(await buildState(req.user.id));
 });
 
 /* Password recovery — email code (Brevo) when configured, otherwise the
@@ -118,7 +132,7 @@ router.post('/forgot-password', rateLimit, async (req, res) => {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
     return res.status(400).json({ error: 'validation', message: 'Please enter a valid email address.' });
   }
-  const user = db.prepare('SELECT id, email, security_question FROM users WHERE email = ?').get(String(email).trim());
+  const user = await db.get('SELECT id, email, security_question FROM users WHERE email = ?', [String(email).trim()]);
   if (!user) {
     return res.status(404).json({ error: 'no_recovery', message: 'No account found with this email — check the spelling, or create a new account.' });
   }
@@ -126,19 +140,20 @@ router.post('/forgot-password', rateLimit, async (req, res) => {
   let emailFailed = false;
   if (isEmailConfigured()) {
     // One email a minute max — silently ignore double-clicks.
-    const existing = db.prepare('SELECT created_at FROM reset_codes WHERE user_id = ?').get(user.id);
-    const tooSoon = existing && existing.created_at > db.prepare(`SELECT datetime('now', '-60 seconds') AS t`).get().t;
+    const existing = await db.get('SELECT created_at FROM reset_codes WHERE user_id = ?', [user.id]);
+    const nowRow = await db.get(`SELECT datetime('now', '-60 seconds') AS t`);
+    const tooSoon = existing && existing.created_at > nowRow.t;
     if (tooSoon) return res.json({ method: 'email', email: user.email });
 
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
     const sent = await sendEmail(user.email, 'StudyMate password reset code', resetCodeEmail(code));
     if (sent) {
-      db.prepare(`
+      await db.run(`
         INSERT INTO reset_codes (user_id, code_hash, expires_at, attempts)
         VALUES (?,?,datetime('now', '+${RESET_CODE_MINUTES} minutes'),0)
         ON CONFLICT(user_id) DO UPDATE SET code_hash = excluded.code_hash,
           expires_at = excluded.expires_at, attempts = 0, created_at = datetime('now')
-      `).run(user.id, bcrypt.hashSync(code, 10));
+      `, [user.id, bcrypt.hashSync(code, 10)]);
       return res.json({ method: 'email', email: user.email });
     }
     emailFailed = true;
@@ -156,32 +171,31 @@ router.post('/forgot-password', rateLimit, async (req, res) => {
   res.json({ method: 'question', question: user.security_question });
 });
 
-router.post('/reset-password', rateLimit, (req, res) => {
+router.post('/reset-password', rateLimit, async (req, res) => {
   const { email, answer, code, newPassword } = req.body || {};
   if (!email || (!answer && !code) || !newPassword) return res.status(400).json({ error: 'validation', message: 'Please fill in every field.' });
   if (typeof newPassword !== 'string' || newPassword.length < 8) return res.status(400).json({ error: 'validation', message: 'Password must be at least 8 characters long.' });
   if (!isPasswordStrongEnough(newPassword)) return res.status(400).json({ error: 'weak_password', message: 'This password is too easy to guess — make it harder (mix uppercase, numbers and a symbol).' });
 
-  const user = db.prepare('SELECT id, password_hash, security_answer_hash FROM users WHERE email = ?').get(String(email).trim());
+  const user = await db.get('SELECT id, password_hash, security_answer_hash FROM users WHERE email = ?', [String(email).trim()]);
   if (!user) {
     return res.status(404).json({ error: 'no_recovery', message: 'No account found with this email.' });
   }
 
   if (code) {
-    const row = db.prepare(`SELECT code_hash, attempts, expires_at < datetime('now') AS expired FROM reset_codes WHERE user_id = ?`).get(user.id);
+    const row = await db.get(`SELECT code_hash, attempts, expires_at < datetime('now') AS expired FROM reset_codes WHERE user_id = ?`, [user.id]);
     const valid = row && !row.expired && row.attempts < RESET_CODE_MAX_ATTEMPTS && bcrypt.compareSync(String(code), row.code_hash);
     if (!valid) {
       if (row && row.expired) {
         return res.status(400).json({ error: 'wrong_code', message: 'That code has expired — ask for a new code.' });
       }
       if (row && row.attempts + 1 >= RESET_CODE_MAX_ATTEMPTS) {
-        db.prepare('DELETE FROM reset_codes WHERE user_id = ?').run(user.id);
+        await db.run('DELETE FROM reset_codes WHERE user_id = ?', [user.id]);
         return res.status(400).json({ error: 'wrong_code', message: 'Too many wrong tries — ask for a new code.' });
       }
-      if (row) db.prepare('UPDATE reset_codes SET attempts = attempts + 1 WHERE user_id = ?').run(user.id);
+      if (row) await db.run('UPDATE reset_codes SET attempts = attempts + 1 WHERE user_id = ?', [user.id]);
       return res.status(400).json({ error: 'wrong_code', message: "That code doesn't match — check the email again, or ask for a new code." });
     }
-    db.prepare('DELETE FROM reset_codes WHERE user_id = ?').run(user.id);
   } else {
     if (!user.security_answer_hash) {
       return res.status(404).json({ error: 'no_recovery', message: 'This account cannot be reset with a security question.' });
@@ -196,26 +210,24 @@ router.post('/reset-password', rateLimit, (req, res) => {
   }
 
   const newHash = bcrypt.hashSync(newPassword, 10);
-  db.exec('BEGIN');
-  try {
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, user.id);
+  const statements = [
+    { sql: 'UPDATE users SET password_hash = ? WHERE id = ?', args: [newHash, user.id] },
     // A reset password must log the account out everywhere.
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
+    { sql: 'DELETE FROM sessions WHERE user_id = ?', args: [user.id] },
+  ];
+  if (code) statements.push({ sql: 'DELETE FROM reset_codes WHERE user_id = ?', args: [user.id] });
+  await db.batch(statements, 'write');
+
   res.json({ ok: true });
 });
 
-router.post('/change-password', rateLimit, requireAuth, (req, res) => {
+router.post('/change-password', rateLimit, requireAuth, async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
   if (!currentPassword || !newPassword) return res.status(400).json({ error: 'validation', message: 'Please fill in every field.' });
   if (typeof newPassword !== 'string' || newPassword.length < 8) return res.status(400).json({ error: 'validation', message: 'Password must be at least 8 characters long.' });
   if (!isPasswordStrongEnough(newPassword)) return res.status(400).json({ error: 'weak_password', message: 'This password is too easy to guess — make it harder (mix uppercase, numbers and a symbol).' });
 
-  const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
+  const user = await db.get('SELECT password_hash FROM users WHERE id = ?', [req.user.id]);
   if (!bcrypt.compareSync(String(currentPassword), user.password_hash)) {
     return res.status(400).json({ error: 'wrong_password', message: 'Your current password is not correct.' });
   }
@@ -224,16 +236,12 @@ router.post('/change-password', rateLimit, requireAuth, (req, res) => {
   }
 
   const newHash = bcrypt.hashSync(newPassword, 10);
-  db.exec('BEGIN');
-  try {
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, req.user.id);
+  await db.batch([
+    { sql: 'UPDATE users SET password_hash = ? WHERE id = ?', args: [newHash, req.user.id] },
     // Keep this session alive, end all others.
-    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(req.user.id, req.sessionToken);
-    db.exec('COMMIT');
-  } catch (e) {
-    db.exec('ROLLBACK');
-    throw e;
-  }
+    { sql: 'DELETE FROM sessions WHERE user_id = ? AND token != ?', args: [req.user.id, req.sessionToken] },
+  ], 'write');
+
   res.json({ ok: true });
 });
 

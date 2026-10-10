@@ -24,7 +24,7 @@ function notEnoughCredits(res, err) {
 
 // Start a test: charges credits, generates questions server-side and stores
 // them (with answers) in a pending row the client never sees.
-router.post('/tests/start', (req, res) => {
+router.post('/tests/start', async (req, res) => {
   const body = req.body || {};
   const difficulty = String(body.difficulty || 'easy');
   if (!VALID_DIFFICULTIES.includes(difficulty)) {
@@ -35,11 +35,11 @@ router.post('/tests/start', (req, res) => {
   let chapter = null, subject = null;
 
   if (chapterId) {
-    const row = db.prepare(`
+    const row = await db.get(`
       SELECT c.id AS chapter_id, c.name AS chapter_name, s.id AS subject_id, s.name AS subject_name
       FROM chapters c JOIN subjects s ON s.id = c.subject_id
       WHERE c.id = ? AND s.user_id = ?
-    `).get(chapterId, req.user.id);
+    `, [chapterId, req.user.id]);
     if (!row) return res.status(404).json({ error: 'not_found', message: 'Topic not found.' });
     chapter = row;
   }
@@ -49,20 +49,20 @@ router.post('/tests/start', (req, res) => {
   const topicName = chapter ? chapter.chapter_name : 'your recent topics';
 
   try {
-    spendCredits(req.user.id, AI_COSTS.test, 'AI-generated test — ' + title);
+    await spendCredits(req.user.id, AI_COSTS.test, 'AI-generated test — ' + title);
   } catch (e) {
     if (e.code === 'not_enough_credits') return notEnoughCredits(res, e);
     throw e;
   }
 
   const questions = getQuestionsForTopic(topicName, effectiveDifficulty);
-  const res2 = db.prepare(`
+  const ins = await db.run(`
     INSERT INTO tests (user_id, chapter_id, title, difficulty, questions_json)
-    VALUES (?,?,?,?,?)
-  `).run(req.user.id, chapterId, title, effectiveDifficulty, JSON.stringify(questions));
+    VALUES (?,?,?,?,?) RETURNING id
+  `, [req.user.id, chapterId, title, effectiveDifficulty, JSON.stringify(questions)]);
 
   res.status(201).json({
-    testId: Number(res2.lastInsertRowid),
+    testId: Number(ins.rows[0].id),
     title,
     difficulty: effectiveDifficulty,
     passMark: PASS_MARK[effectiveDifficulty],
@@ -70,13 +70,13 @@ router.post('/tests/start', (req, res) => {
   });
 });
 
-// Grade a pending test, then apply chapter progress and rewards atomically.
-router.post('/tests/:id/submit', (req, res) => {
+// Grade a pending test, then apply chapter progress and rewards.
+router.post('/tests/:id/submit', async (req, res) => {
   const testId = Number(req.params.id);
   const answers = (req.body || {}).answers;
   if (!Array.isArray(answers)) return res.status(400).json({ error: 'validation', message: 'answers must be an array.' });
 
-  const test = db.prepare('SELECT * FROM tests WHERE id = ? AND user_id = ?').get(testId, req.user.id);
+  const test = await db.get('SELECT * FROM tests WHERE id = ? AND user_id = ?', [testId, req.user.id]);
   if (!test) return res.status(404).json({ error: 'not_found', message: 'Test not found.' });
   if (test.status !== 'pending') return res.status(409).json({ error: 'already_submitted', message: 'This test was already submitted.' });
 
@@ -88,57 +88,48 @@ router.post('/tests/:id/submit', (req, res) => {
   const percentage = Math.round((score / questions.length) * 100);
   const passed = percentage >= PASS_MARK[test.difficulty] ? 1 : 0;
 
+  // The guarded UPDATE is the atomic gate against double submits.
+  const gate = await db.run(`
+    UPDATE tests SET status='submitted', submitted_at=datetime('now'), score=?, total=?, percentage=?, passed=?
+    WHERE id=? AND status='pending' RETURNING id
+  `, [score, questions.length, percentage, passed, testId]);
+  if (gate.rows.length === 0) {
+    return res.status(409).json({ error: 'already_submitted', message: 'This test was already submitted.' });
+  }
+
   const rewards = [];
   let wasAlreadyComplete = false;
 
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    const upd = db.prepare(`UPDATE tests SET status='submitted', submitted_at=datetime('now'), score=?, total=?, percentage=?, passed=? WHERE id=? AND status='pending'`)
-      .run(score, questions.length, percentage, passed, testId);
-    if (upd.changes === 0) {
-      const err = new Error('This test was already submitted.');
-      err.code = 'already_submitted';
-      throw err;
-    }
-
-    if (test.chapter_id) {
-      const chapter = db.prepare('SELECT * FROM chapters WHERE id = ?').get(test.chapter_id);
-      if (chapter) {
-        if (test.difficulty === 'easy') {
-          if (passed) {
-            wasAlreadyComplete = !!chapter.test_passed;
-            db.prepare(`UPDATE chapters SET test_passed=1, level='easy', failed_easy=0 WHERE id=?`).run(chapter.id);
-          } else {
-            db.prepare('UPDATE chapters SET failed_easy=1 WHERE id=?').run(chapter.id);
-          }
-        } else if (test.difficulty === 'medium' && passed) {
-          db.prepare(`UPDATE chapters SET level='medium', failed_easy=0 WHERE id=?`).run(chapter.id);
-        } else if (test.difficulty === 'hard' && passed) {
-          db.prepare(`UPDATE chapters SET level='hard', failed_easy=0 WHERE id=?`).run(chapter.id);
-          // Re-passing hard still counts as a passed test (matches original behaviour).
+  if (test.chapter_id) {
+    const chapter = await db.get('SELECT * FROM chapters WHERE id = ?', [test.chapter_id]);
+    if (chapter) {
+      if (test.difficulty === 'easy') {
+        if (passed) {
+          wasAlreadyComplete = !!chapter.test_passed;
+          await db.run(`UPDATE chapters SET test_passed=1, level='easy', failed_easy=0 WHERE id=?`, [chapter.id]);
+        } else {
+          await db.run('UPDATE chapters SET failed_easy=1 WHERE id=?', [chapter.id]);
         }
+      } else if (test.difficulty === 'medium' && passed) {
+        await db.run(`UPDATE chapters SET level='medium', failed_easy=0 WHERE id=?`, [chapter.id]);
+      } else if (test.difficulty === 'hard' && passed) {
+        await db.run(`UPDATE chapters SET level='hard', failed_easy=0 WHERE id=?`, [chapter.id]);
+        // Re-passing hard still counts as a passed test (matches original behaviour).
       }
     }
-    db.exec('COMMIT');
-  } catch (e) {
-    try { db.exec('ROLLBACK'); } catch (_) { /* ignore */ }
-    if (e.code === 'already_submitted') {
-      return res.status(409).json({ error: 'already_submitted', message: 'This test was already submitted.' });
-    }
-    throw e;
   }
 
-  // Credits live outside the grading transaction; each entry is itself atomic.
+  // Credits live outside the grading step; each entry is itself atomic.
   if (passed) {
     if (test.difficulty === 'easy') {
-      earnCredits(req.user.id, REWARDS.passEasy, 'Passed easy test — ' + test.title);
+      await earnCredits(req.user.id, REWARDS.passEasy, 'Passed easy test — ' + test.title);
       rewards.push({ amount: REWARDS.passEasy, reason: 'Passed easy test' });
       if (test.chapter_id && !wasAlreadyComplete) {
-        earnCredits(req.user.id, REWARDS.completeChapter, 'Completed chapter — ' + test.title);
+        await earnCredits(req.user.id, REWARDS.completeChapter, 'Completed chapter — ' + test.title);
         rewards.push({ amount: REWARDS.completeChapter, reason: 'Completed chapter' });
       }
     } else if (test.difficulty === 'medium') {
-      earnCredits(req.user.id, REWARDS.passMedium, 'Passed medium test — ' + test.title);
+      await earnCredits(req.user.id, REWARDS.passMedium, 'Passed medium test — ' + test.title);
       rewards.push({ amount: REWARDS.passMedium, reason: 'Passed medium test' });
     }
   }
@@ -150,7 +141,7 @@ router.post('/tests/:id/submit', (req, res) => {
       chapterId: test.chapter_id, passMark: PASS_MARK[test.difficulty],
       wasAlreadyComplete, rewards,
     },
-    state: buildState(req.user.id),
+    state: await buildState(req.user.id),
   });
 });
 

@@ -3,6 +3,7 @@
 const path = require('path');
 const express = require('express');
 
+const db = require('./db');
 const { attachUser } = require('./auth');
 const { isEmailConfigured } = require('./email');
 const { router: authRouter } = require('./routes/auth');
@@ -57,9 +58,9 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '256kb' }));
-app.use(attachUser);
+app.use('/api', attachUser);
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, email: isEmailConfigured() ? 'on' : 'off' }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, email: isEmailConfigured() ? 'on' : 'off', storage: db.isRemote ? 'turso' : 'local' }));
 
 app.use('/api/auth', authRouter);
 app.use('/api', subjectsRouter);
@@ -95,6 +96,11 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'server_error', message: 'Something went wrong on our side — please try again.' });
 });
 
-app.listen(PORT, () => {
-  console.log('📚 StudyMate server running at http://localhost:' + PORT);
+db.ready.then(() => {
+  app.listen(PORT, () => {
+    console.log('📚 StudyMate server running at http://localhost:' + PORT);
+  });
+}).catch((err) => {
+  console.error('Database failed to initialize:', err);
+  process.exit(1);
 });

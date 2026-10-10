@@ -124,13 +124,13 @@ router.post('/ai/ask', async (req, res) => {
   if (!question) return res.status(400).json({ error: 'validation', message: 'Ask a question first.' });
   if (question.length > 2000) return res.status(400).json({ error: 'validation', message: 'Question is too long.' });
 
-  const topics = knownTopicsFor(req.user.id);
+  const topics = await knownTopicsFor(req.user.id);
   const requestType = classifyAIRequestType(question, topics);
   const cost = AI_COSTS[requestType];
 
   let balance;
   try {
-    balance = spendCredits(req.user.id, cost, LABELS[requestType] || 'AI question');
+    balance = await spendCredits(req.user.id, cost, LABELS[requestType] || 'AI question');
   } catch (e) {
     if (e.code === 'not_enough_credits') {
       return res.status(402).json({
@@ -156,14 +156,15 @@ router.post('/ai/ask', async (req, res) => {
     }
   }
 
-  const insertMsg = db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)');
-  insertMsg.run(req.user.id, 'user', question);
-  insertMsg.run(req.user.id, 'assistant', answer);
+  await db.batch([
+    { sql: 'INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)', args: [req.user.id, 'user', question] },
+    { sql: 'INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)', args: [req.user.id, 'assistant', answer] },
+  ], 'write');
 
   res.json({ answer, requestType, credits: balance });
 });
 
-router.post('/ai/settings', (req, res) => {
+router.post('/ai/settings', async (req, res) => {
   let url = String((req.body || {}).workerUrl || '').trim();
   if (url && !/^https:\/\/.+/.test(url)) {
     return res.status(400).json({ error: 'validation', message: "That doesn't look like a valid https:// URL — double check it." });
@@ -175,8 +176,8 @@ router.post('/ai/settings', (req, res) => {
     return res.status(400).json({ error: 'validation', message: "That doesn't look like a Google AI API key — it should start with \"AIza\" or \"AQ.\"." });
   }
 
-  db.prepare('UPDATE users SET ai_worker_url = ?, gemini_api_key = ? WHERE id = ?').run(url, geminiKey, req.user.id);
-  res.json({ ok: true, workerUrl: url, hasGeminiKey: !!geminiKey, state: buildState(req.user.id) });
+  await db.run('UPDATE users SET ai_worker_url = ?, gemini_api_key = ? WHERE id = ?', [url, geminiKey, req.user.id]);
+  res.json({ ok: true, workerUrl: url, hasGeminiKey: !!geminiKey, state: await buildState(req.user.id) });
 });
 
 module.exports = router;

@@ -28,17 +28,19 @@ function getCurriculumChapters(standard, subjectName) {
   return CURRICULUM[standard][normalizeSubjectName(subjectName)] || null;
 }
 
-function insertSubjectWithChapters(userId, name, chapterNames) {
-  const insertSubject = db.prepare('INSERT OR IGNORE INTO subjects (user_id, name) VALUES (?,?)');
-  const insertChapter = db.prepare('INSERT INTO chapters (subject_id, name, position) VALUES (?,?,?)');
-  const res = insertSubject.run(userId, name);
-  if (res.changes === 0) return null;
-  const subjectId = Number(res.lastInsertRowid);
-  chapterNames.forEach((chName, i) => insertChapter.run(subjectId, chName, i));
-  return subjectId;
+// Subject + its chapters as one atomic batch; chapter rows find their subject
+// through the UNIQUE (user_id, name) key.
+function subjectBatchStatements(userId, name, chapterNames) {
+  return [
+    { sql: 'INSERT INTO subjects (user_id, name) VALUES (?,?)', args: [userId, name] },
+    ...chapterNames.map((chName, i) => ({
+      sql: 'INSERT INTO chapters (subject_id, name, position) VALUES ((SELECT id FROM subjects WHERE user_id = ? AND name = ?), ?, ?)',
+      args: [userId, name, chName, i],
+    })),
+  ];
 }
 
-router.post('/subjects', (req, res) => {
+router.post('/subjects', async (req, res) => {
   const rawName = String((req.body || {}).name || '').trim();
   if (!rawName) return res.status(400).json({ error: 'validation', message: 'Enter a subject name.' });
 
@@ -46,31 +48,59 @@ router.post('/subjects', (req, res) => {
   const curriculumChapters = getCurriculumChapters(req.user.standard, rawName);
   const chapterNames = curriculumChapters || ['Chapter 1', 'Chapter 2', 'Chapter 3'];
 
-  const subjectId = insertSubjectWithChapters(req.user.id, displayName, chapterNames);
-  if (subjectId === null) {
+  const existing = await db.get('SELECT id FROM subjects WHERE user_id = ? AND name = ?', [req.user.id, displayName]);
+  if (existing) {
     return res.status(409).json({ error: 'duplicate', message: 'You already have a subject called "' + displayName + '".' });
   }
-  res.status(201).json(buildState(req.user.id));
+
+  try {
+    await db.batch(subjectBatchStatements(req.user.id, displayName, chapterNames), 'write');
+  } catch (e) {
+    if (/UNIQUE constraint failed: subjects/i.test(e.message || '')) {
+      return res.status(409).json({ error: 'duplicate', message: 'You already have a subject called "' + displayName + '".' });
+    }
+    throw e;
+  }
+  res.status(201).json(await buildState(req.user.id));
 });
 
-router.post('/subjects/load-all', (req, res) => {
+router.post('/subjects/load-all', async (req, res) => {
   const standard = req.user.standard;
   if (!standard || !CURRICULUM[standard]) {
     return res.status(400).json({ error: 'no_curriculum', message: 'No curriculum found for this standard yet.' });
   }
-  const existing = new Set(db.prepare('SELECT name FROM subjects WHERE user_id = ?').all(req.user.id).map(r => r.name));
+  const existing = new Set((await db.all('SELECT name FROM subjects WHERE user_id = ?', [req.user.id])).map(r => r.name));
+
+  // One batch for everything missing. INSERT OR IGNORE + "subject has no
+  // chapters yet" keep this idempotent even if it's clicked twice at once.
+  const stmts = [];
   for (const [name, chapters] of Object.entries(CURRICULUM[standard])) {
-    if (!existing.has(name)) insertSubjectWithChapters(req.user.id, name, chapters);
+    if (existing.has(name)) continue;
+    stmts.push({ sql: 'INSERT OR IGNORE INTO subjects (user_id, name) VALUES (?,?)', args: [req.user.id, name] });
+    chapters.forEach((chName, i) => {
+      stmts.push({
+        sql: `INSERT INTO chapters (subject_id, name, position)
+              SELECT s.id, ?, ? FROM subjects s
+              WHERE s.user_id = ? AND s.name = ? AND NOT EXISTS (SELECT 1 FROM chapters WHERE subject_id = s.id)`,
+        args: [chName, i, req.user.id, name],
+      });
+    });
   }
-  res.json(buildState(req.user.id));
+  if (stmts.length) await db.batch(stmts, 'write');
+  res.json(await buildState(req.user.id));
 });
 
-router.delete('/subjects/:id', (req, res) => {
+router.delete('/subjects/:id', async (req, res) => {
   const id = Number(req.params.id);
-  const subject = db.prepare('SELECT id FROM subjects WHERE id = ? AND user_id = ?').get(id, req.user.id);
+  const subject = await db.get('SELECT id FROM subjects WHERE id = ? AND user_id = ?', [id, req.user.id]);
   if (!subject) return res.status(404).json({ error: 'not_found' });
-  db.prepare('DELETE FROM subjects WHERE id = ?').run(id);
-  res.json(buildState(req.user.id));
+
+  await db.batch([
+    { sql: 'UPDATE tests SET chapter_id = NULL WHERE chapter_id IN (SELECT id FROM chapters WHERE subject_id = ?)', args: [id] },
+    { sql: 'DELETE FROM chapters WHERE subject_id = ?', args: [id] },
+    { sql: 'DELETE FROM subjects WHERE id = ? AND user_id = ?', args: [id, req.user.id] },
+  ], 'write');
+  res.json(await buildState(req.user.id));
 });
 
 module.exports = router;

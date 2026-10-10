@@ -42,15 +42,14 @@ function isPasswordStrongEnough(pw) {
 
 /* Sessions */
 
-function createSession(userId) {
+async function createSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
-  db.prepare(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,datetime('now', '+${SESSION_DAYS} days'))`)
-    .run(token, userId);
+  await db.run(`INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,datetime('now', '+${SESSION_DAYS} days'))`, [token, userId]);
   return token;
 }
 
-function destroySession(token) {
-  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+async function destroySession(token) {
+  if (token) await db.run('DELETE FROM sessions WHERE token = ?', [token]);
 }
 
 function parseCookies(req) {
@@ -78,17 +77,17 @@ function expiredCookie() {
 }
 
 // Populates req.sessionToken / req.user when a valid session cookie is present.
-function attachUser(req, _res, next) {
+async function attachUser(req, _res, next) {
   req.user = null;
   req.sessionToken = null;
   const token = parseCookies(req)[COOKIE_NAME];
   if (token) {
-    const row = db.prepare(`
+    const row = await db.get(`
       SELECT u.id, u.name, u.email, u.standard, u.division, u.board, u.ai_worker_url,
              u.gemini_api_key, u.credits, u.last_daily_goal_date
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token = ? AND s.expires_at >= datetime('now')
-    `).get(token);
+    `, [token]);
     if (row) {
       req.user = row;
       req.sessionToken = token;

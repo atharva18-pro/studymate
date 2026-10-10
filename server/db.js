@@ -2,17 +2,26 @@
 
 const path = require('path');
 const fs = require('fs');
-const { DatabaseSync } = require('node:sqlite');
+const { createClient } = require('@libsql/client');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+/* Storage picks itself at boot:
+   - TURSO_DATABASE_URL set  -> Turso/libSQL cloud (survives restarts/redeploys).
+   - otherwise               -> local SQLite file in ../data (dev + fallback).
+   Render's free tier has an ephemeral filesystem, so production relies on Turso. */
 
-const db = new DatabaseSync(path.join(DATA_DIR, 'studymate.db'));
+const TURSO_URL = (process.env.TURSO_DATABASE_URL || '').trim();
+const TURSO_TOKEN = (process.env.TURSO_AUTH_TOKEN || '').trim();
 
-db.exec(`
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
+let url = TURSO_URL;
+if (!url) {
+  const DATA_DIR = path.join(__dirname, '..', 'data');
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  url = 'file:' + path.join(DATA_DIR, 'studymate.db').replace(/\\/g, '/');
+}
 
+const client = createClient({ url, authToken: TURSO_TOKEN || undefined });
+
+const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
@@ -125,25 +134,71 @@ CREATE INDEX IF NOT EXISTS idx_tests_user ON tests(user_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_user ON credit_ledger(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
-`);
+`;
 
 // Lightweight migrations for databases created before these columns existed.
 // Duplicate-column errors just mean the column is already there.
-for (const stmt of [
+const MIGRATION_COLUMNS = [
   `ALTER TABLE users ADD COLUMN security_question TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE users ADD COLUMN security_answer_hash TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE users ADD COLUMN gemini_api_key TEXT NOT NULL DEFAULT ''`,
-]) {
-  try { db.exec(stmt); } catch (_) { /* column already exists */ }
+];
+
+async function init() {
+  if (!TURSO_URL) {
+    await client.execute('PRAGMA journal_mode = WAL');
+    await client.execute('PRAGMA foreign_keys = ON');
+  }
+  await client.executeMultiple(SCHEMA_SQL);
+  for (const stmt of MIGRATION_COLUMNS) {
+    try { await client.execute(stmt); } catch (_) { /* column already exists */ }
+  }
+  console.log(TURSO_URL ? 'Database: Turso (TURSO_DATABASE_URL set)' : 'Database: local file ../data/studymate.db');
+}
+
+const ready = init();
+
+// libSQL throws on undefined args, so normalize them to null.
+function normalizeArgs(args) {
+  return (args || []).map(a => (a === undefined ? null : a));
+}
+
+function plainRows(result) {
+  return result.rows.map(r => ({ ...r }));
+}
+
+async function get(sql, args) {
+  const r = await client.execute({ sql, args: normalizeArgs(args) });
+  return r.rows.length ? { ...r.rows[0] } : null;
+}
+
+async function all(sql, args) {
+  return plainRows(await client.execute({ sql, args: normalizeArgs(args) }));
+}
+
+// `changes` comes from rowsAffected — which libSQL reports as 0 for
+// statements with RETURNING, so those callers check the returned rows instead.
+async function run(sql, args) {
+  const r = await client.execute({ sql, args: normalizeArgs(args) });
+  return { changes: Number(r.rowsAffected) || 0, rows: plainRows(r) };
+}
+
+function batch(statements, mode = 'write') {
+  return client.batch(statements.map(s => ({ sql: s.sql, args: normalizeArgs(s.args) })), mode);
 }
 
 // Periodic cleanup of expired sessions, reset codes and stale pending tests.
 function cleanup() {
-  db.prepare(`DELETE FROM sessions WHERE expires_at < datetime('now')`).run();
-  db.prepare(`DELETE FROM reset_codes WHERE expires_at < datetime('now')`).run();
-  db.prepare(`DELETE FROM tests WHERE status = 'pending' AND created_at < datetime('now', '-1 day')`).run();
+  return batch([
+    { sql: `DELETE FROM sessions WHERE expires_at < datetime('now')` },
+    { sql: `DELETE FROM reset_codes WHERE expires_at < datetime('now')` },
+    { sql: `DELETE FROM tests WHERE status = 'pending' AND created_at < datetime('now', '-1 day')` },
+  ]);
 }
-cleanup();
-setInterval(cleanup, 60 * 60 * 1000).unref();
 
-module.exports = db;
+ready.then(() => {
+  cleanup().catch(() => {});
+  setInterval(() => { cleanup().catch(() => {}); }, 60 * 60 * 1000).unref();
+}).catch(() => {});
+
+module.exports = { ready, isRemote: !!TURSO_URL, get, all, run, batch };
